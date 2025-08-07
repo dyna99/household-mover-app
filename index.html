@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Moving Checklist</title>
+  <style>
+    :root{
+      --bg: #f7f7fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --accent: #2563eb;
+      --accent-2: #a5b4fc;
+      --border: #e5e7eb;
+      --success: #10b981;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      background: var(--bg);
+      color: var(--text);
+    }
+    header{
+      position: sticky; top: 0; z-index: 10;
+      backdrop-filter: blur(6px);
+      background: rgba(247,247,251,0.85);
+      border-bottom: 1px solid var(--border);
+    }
+    .wrap{max-width: 980px; margin: 0 auto; padding: 16px;}
+    h1{margin: 0 0 8px; font-size: 1.8rem}
+    .sub{color: var(--muted); margin: 0}
+
+    .panel{display:grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px}
+    @media (min-width:900px){.panel{grid-template-columns: 1fr 320px}}
+
+    .card{background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px}
+
+    .progress{
+      display:flex; align-items:center; gap:10px; margin-top:10px
+    }
+    .bar{flex:1; height: 10px; background:#eef2ff; border-radius:8px; overflow:hidden}
+    .bar > span{display:block; height:100%; width:0; background: linear-gradient(90deg, var(--accent), var(--success)); transition: width .25s ease}
+
+    .section{margin-top: 8px}
+    .section h2{font-size: 1.1rem; margin: 8px 0 6px}
+    .items{display:flex; flex-direction:column; gap: 6px}
+
+    .item{display:flex; align-items:center; gap:10px; background:#fafafe; border:1px solid var(--border); border-radius:10px; padding:10px}
+    .item.done{opacity:.65}
+    .item label{flex:1; display:flex; align-items:center; gap:10px; cursor:pointer}
+    .item small{color: var(--muted)}
+    .item button{
+      border:1px solid var(--border); background:#fff; border-radius:8px; padding:6px 8px; cursor:pointer
+    }
+    .item button:hover{background:#f3f4f6}
+
+    .controls{display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; margin-top:8px}
+    input[type="text"], select{
+      border:1px solid var(--border); padding:10px; border-radius:10px; width:100%; background:#fff
+    }
+    .btn{
+      background: var(--accent); color:#fff; border: 1px solid var(--accent); border-radius: 10px; padding:10px 12px; cursor:pointer; font-weight:600
+    }
+    .btn.secondary{background:#fff; color: var(--text); border-color: var(--border)}
+    .btn:hover{filter:brightness(0.97)}
+
+    .legend{display:flex; gap:10px; flex-wrap:wrap; font-size:.9rem; color:var(--muted)}
+    .legend span{display:inline-flex; align-items:center; gap:6px}
+    .dot{width:10px; height:10px; border-radius:50%; background: var(--accent)}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <h1>Moving Checklist</h1>
+      <p class="sub">Track tasks across phases, add your own items, and see progress. Data is saved to your browser.</p>
+      <div class="progress">
+        <div class="bar" aria-label="Completion progress"><span id="progressFill"></span></div>
+        <strong id="progressLabel">0%</strong>
+        <button class="btn secondary" id="printBtn" title="Print or save as PDF">Print</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap panel">
+    <section class="card">
+      <div class="legend" aria-hidden="true">
+        <span><span class="dot"></span> Unchecked</span>
+        <span><span class="dot" style="background: var(--success)"></span> Done</span>
+      </div>
+
+      <div id="sections"></div>
+    </section>
+
+    <aside class="card">
+      <h2>Add a custom item</h2>
+      <div class="controls" role="form" aria-label="Add custom item">
+        <input type="text" id="newText" placeholder="e.g., Measure doorways for couch" />
+        <select id="newPhase" title="Choose a phase"></select>
+        <button class="btn" id="addBtn">Add</button>
+      </div>
+
+      <hr style="margin:14px 0; border:0; border-top:1px solid var(--border)" />
+      <h2>Data</h2>
+      <div style="display:flex; gap:8px; flex-wrap:wrap">
+        <button class="btn secondary" id="exportBtn" title="Download a backup JSON file">Export</button>
+        <label class="btn secondary" for="importFile" style="display:inline-block; cursor:pointer">Import</label>
+        <input type="file" id="importFile" accept="application/json" style="display:none" />
+        <button class="btn secondary" id="resetBtn" title="Clear everything">Reset</button>
+      </div>
+      <p class="sub" style="margin-top:8px">Your checklist is stored locally in your browser via <code>localStorage</code>.</p>
+    </aside>
+  </main>
+
+  <template id="sectionTmpl">
+    <div class="section">
+      <h2></h2>
+      <div class="items"></div>
+    </div>
+  </template>
+
+  <template id="itemTmpl">
+    <div class="item">
+      <label>
+        <input type="checkbox" />
+        <span class="text"></span>
+      </label>
+      <button class="remove" title="Delete item">✕</button>
+    </div>
+  </template>
+
+  <script>
+    // --- Basic data model ---
+    const DEFAULT_DATA = [
+      { phase: 'Before Moving (4–8 weeks out)', items: [
+        { text: 'Create a moving binder / digital folder', done: false },
+        { text: 'Declutter: donate, sell, recycle', done: false },
+        { text: 'Collect important records (medical, school, vet)', done: false },
+        { text: 'Get moving quotes / book movers or truck', done: false },
+        { text: 'Schedule time off work / childcare', done: false },
+      ]},
+      { phase: 'Packing (2–3 weeks out)', items: [
+        { text: 'Gather boxes, tape, bubble wrap, markers', done: false },
+        { text: 'Label by room + priority', done: false },
+        { text: 'Pack off-season items first', done: false },
+        { text: 'Set aside essentials box (first-night kit)', done: false },
+      ]},
+      { phase: 'Moving Week', items: [
+        { text: 'Confirm movers / helpers & elevator reservations', done: false },
+        { text: 'Change of address (USPS, banks, subscriptions)', done: false },
+        { text: 'Transfer utilities (power, water, internet)', done: false },
+        { text: 'Defrost fridge / clear perishables', done: false },
+      ]},
+      { phase: 'Moving Day', items: [
+        { text: 'Protect floors / door frames', done: false },
+        { text: 'Keep IDs, keys, and valuables with you', done: false },
+        { text: 'Take meter photos / final walkthrough', done: false },
+      ]},
+      { phase: 'After Move', items: [
+        { text: 'Unpack essentials box', done: false },
+        { text: 'Assemble beds & set up bathrooms', done: false },
+        { text: 'Test smoke detectors & change HVAC filters', done: false },
+        { text: 'Update vehicle registration / voter registration', done: false },
+      ]},
+    ];
+
+    const STORAGE_KEY = 'moving-checklist-v1';
+
+    function loadData(){
+      try{
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if(!raw) return structuredClone(DEFAULT_DATA);
+        const parsed = JSON.parse(raw);
+        // basic validation
+        if(!Array.isArray(parsed)) return structuredClone(DEFAULT_DATA);
+        return parsed;
+      }catch(e){
+        console.warn('Failed to load data, using defaults', e);
+        return structuredClone(DEFAULT_DATA);
+      }
+    }
+    function saveData(){
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    }
+
+    let data = loadData();
+
+    // --- DOM helpers ---
+    const sectionsEl = document.getElementById('sections');
+    const sectionTmpl = document.getElementById('sectionTmpl');
+    const itemTmpl = document.getElementById('itemTmpl');
+    const progressFill = document.getElementById('progressFill');
+    const progressLabel = document.getElementById('progressLabel');
+
+    function render(){
+      sectionsEl.innerHTML = '';
+      data.forEach((section, sIdx) => {
+        const node = sectionTmpl.content.cloneNode(true);
+        node.querySelector('h2').textContent = section.phase;
+        const itemsEl = node.querySelector('.items');
+
+        section.items.forEach((it, iIdx) => {
+          const itemNode = itemTmpl.content.cloneNode(true);
+          const row = itemNode.querySelector('.item');
+          const cb = itemNode.querySelector('input[type="checkbox"]');
+          const textEl = itemNode.querySelector('.text');
+          const removeBtn = itemNode.querySelector('.remove');
+
+          textEl.textContent = it.text;
+          cb.checked = !!it.done;
+          row.classList.toggle('done', !!it.done);
+          cb.addEventListener('change', () => {
+            it.done = cb.checked;
+            row.classList.toggle('done', it.done);
+            saveData();
+            updateProgress();
+          });
+          removeBtn.addEventListener('click', () => {
+            if(confirm('Remove this item?')){
+              section.items.splice(iIdx, 1);
+              saveData();
+              render();
+              updateProgress();
+            }
+          });
+
+          itemsEl.appendChild(itemNode);
+        });
+
+        sectionsEl.appendChild(node);
+      });
+
+      // Fill the phase dropdown
+      const sel = document.getElementById('newPhase');
+      sel.innerHTML = '';
+      data.forEach((s, idx) => {
+        const opt = document.createElement('option');
+        opt.value = String(idx);
+        opt.textContent = s.phase;
+        sel.appendChild(opt);
+      });
+
+      updateProgress();
+    }
+
+    function updateProgress(){
+      const all = data.flatMap(s => s.items);
+      const total = all.length || 1;
+      const done = all.filter(i => i.done).length;
+      const pct = Math.round((done / total) * 100);
+      progressFill.style.width = pct + '%';
+      progressLabel.textContent = pct + '%';
+    }
+
+    // Add item
+    document.getElementById('addBtn').addEventListener('click', () => {
+      const text = document.getElementById('newText').value.trim();
+      const phaseIdx = parseInt(document.getElementById('newPhase').value, 10);
+      if(!text) return alert('Enter an item description.');
+      data[phaseIdx].items.push({ text, done: false });
+      document.getElementById('newText').value = '';
+      saveData();
+      render();
+    });
+
+    // Export JSON
+    document.getElementById('exportBtn').addEventListener('click', () => {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'moving-checklist.json'; a.click();
+      URL.revokeObjectURL(url);
+    });
+
+    // Import JSON
+    document.getElementById('importFile').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try{
+          const parsed = JSON.parse(reader.result);
+          if(!Array.isArray(parsed)) throw new Error('Invalid format');
+          data = parsed; saveData(); render();
+        }catch(err){
+          alert('Could not import file. Make sure it is a previously exported JSON.');
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // Reset
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      if(confirm('This will clear all items and restore defaults. Continue?')){
+        data = structuredClone(DEFAULT_DATA);
+        saveData();
+        render();
+      }
+    });
+
+    // Print
+    document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+    // Initial render
+    render();
+  </script>
+</body>
+</html>
